@@ -1,0 +1,25 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor files
+.vscode/
+.idea/
+*.suo
+*.ntuser
+*.user
+
+# Large original PDF (optional, but let's ignore to keep repo light)
+# 483553A_Data_Analyst_Securitisation.pdf

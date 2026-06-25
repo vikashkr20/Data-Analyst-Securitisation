@@ -1,0 +1,913 @@
+// ============================================================
+// DAX MEASURES — Securitisation AI Agent
+// Pool: ZAAUTO2024-1 | Auto Loan ABS | India
+// 80+ Measures organized by Category
+// ============================================================
+// Star Schema Tables:
+//   DimLoan, DimBorrower, DimVehicle, DimGeography, DimDate
+//   FactMonthlyPerformance, FactStaticPool, FactDynamicLoss
+//   (Loan-level snapshot fields on FactMonthlyPerformance)
+// ============================================================
+
+
+// ============================================================
+// CATEGORY 1: POOL BALANCE MEASURES
+// ============================================================
+
+// [Pool Balance] Total Outstanding Balance
+// Business Purpose: Sum of current outstanding principal across all active loans.
+[Total Outstanding Balance] =
+    SUMX(
+        FILTER(auto_loan_securitisation_data, auto_loan_securitisation_data[CurrentBalance] > 0),
+        auto_loan_securitisation_data[CurrentBalance]
+    )
+
+// [Pool Balance] Original Pool Balance
+// Business Purpose: Total original loan amount at origination for the entire pool.
+[Original Pool Balance] =
+    SUM(auto_loan_securitisation_data[OriginalLoanAmount])
+
+// [Pool Balance] Active Loan Count
+// Business Purpose: Count of loans with a positive outstanding balance.
+[Active Loan Count] =
+    COUNTROWS(
+        FILTER(auto_loan_securitisation_data, auto_loan_securitisation_data[CurrentBalance] > 0)
+    )
+
+// [Pool Balance] Defaulted Loan Count
+// Business Purpose: Count of loans marked as defaulted.
+[Defaulted Loan Count] =
+    CALCULATE(
+        COUNTROWS(auto_loan_securitisation_data),
+        auto_loan_securitisation_data[IsDefaulted] = TRUE()
+    )
+
+// [Pool Balance] Prepaid Loan Count
+// Business Purpose: Count of loans fully paid off (zero balance, not defaulted).
+[Prepaid Loan Count] =
+    CALCULATE(
+        COUNTROWS(auto_loan_securitisation_data),
+        auto_loan_securitisation_data[CurrentBalance] = 0,
+        auto_loan_securitisation_data[IsDefaulted] = FALSE()
+    )
+
+// [Pool Balance] Delinquent Balance (30+ DPD)
+// Business Purpose: Total outstanding balance of loans 30 or more days past due.
+[Delinquent Balance 30Plus] =
+    CALCULATE(
+        SUM(auto_loan_securitisation_data[CurrentBalance]),
+        auto_loan_securitisation_data[DelinquencyDays] >= 30
+    )
+
+// [Pool Balance] Current Balance (0 DPD)
+// Business Purpose: Total balance of loans with zero days past due.
+[Current Balance 0DPD] =
+    CALCULATE(
+        SUM(auto_loan_securitisation_data[CurrentBalance]),
+        auto_loan_securitisation_data[DelinquencyDays] = 0
+    )
+
+// [Pool Balance] Pool Factor
+// Business Purpose: Proportion of original pool balance remaining outstanding.
+[Pool Factor] =
+    DIVIDE([Total Outstanding Balance], [Original Pool Balance], 0)
+
+// [Pool Balance] Total EMI Due
+// Business Purpose: Sum of all scheduled EMI payments due in the current period.
+[Total EMI Due] =
+    SUM(auto_loan_securitisation_data[ScheduledPaymentDue])
+
+// [Pool Balance] Net Loss Total
+// Business Purpose: Total net credit loss after recoveries across the pool.
+[Net Loss Total] =
+    SUM(auto_loan_securitisation_data[NetLoss])
+
+
+// ============================================================
+// CATEGORY 2: DELINQUENCY BUCKET MEASURES
+// ============================================================
+
+// [Delinquency] Balance_Current
+// Business Purpose: Outstanding balance of loans with zero delinquency (performing).
+[Balance_Current] =
+    CALCULATE(
+        SUM(auto_loan_securitisation_data[CurrentBalance]),
+        auto_loan_securitisation_data[DelinquencyStatus] = "Current"
+    )
+
+// [Delinquency] Balance_1to29DPD
+// Business Purpose: Balance of loans 1 to 29 days past due (early warning bucket).
+[Balance_1to29DPD] =
+    CALCULATE(
+        SUM(auto_loan_securitisation_data[CurrentBalance]),
+        auto_loan_securitisation_data[DelinquencyStatus] = "1-29 DPD"
+    )
+
+// [Delinquency] Balance_30to59DPD
+// Business Purpose: Balance of loans in the 30-59 DPD bucket (SMA-1 equivalent).
+[Balance_30to59DPD] =
+    CALCULATE(
+        SUM(auto_loan_securitisation_data[CurrentBalance]),
+        auto_loan_securitisation_data[DelinquencyStatus] = "30-59 DPD"
+    )
+
+// [Delinquency] Balance_60to89DPD
+// Business Purpose: Balance of loans in the 60-89 DPD bucket (SMA-2 equivalent).
+[Balance_60to89DPD] =
+    CALCULATE(
+        SUM(auto_loan_securitisation_data[CurrentBalance]),
+        auto_loan_securitisation_data[DelinquencyStatus] = "60-89 DPD"
+    )
+
+// [Delinquency] Balance_90to119DPD
+// Business Purpose: Balance of loans in the 90-119 DPD bucket (NPA boundary).
+[Balance_90to119DPD] =
+    CALCULATE(
+        SUM(auto_loan_securitisation_data[CurrentBalance]),
+        auto_loan_securitisation_data[DelinquencyStatus] = "90-119 DPD"
+    )
+
+// [Delinquency] Balance_120Plus
+// Business Purpose: Balance of loans 120+ DPD — classified as NPA under RBI norms.
+[Balance_120Plus] =
+    CALCULATE(
+        SUM(auto_loan_securitisation_data[CurrentBalance]),
+        auto_loan_securitisation_data[DelinquencyStatus] IN {"120+ DPD", "Default", "Repossessed"}
+    )
+
+// [Delinquency] Count_Current
+// Business Purpose: Number of loans in current (performing) status.
+[Count_Current] =
+    CALCULATE(
+        COUNTROWS(auto_loan_securitisation_data),
+        auto_loan_securitisation_data[DelinquencyStatus] = "Current"
+    )
+
+// [Delinquency] Count_30Plus
+// Business Purpose: Number of loans 30 or more days past due.
+[Count_30Plus] =
+    CALCULATE(
+        COUNTROWS(auto_loan_securitisation_data),
+        auto_loan_securitisation_data[DelinquencyDays] >= 30
+    )
+
+// [Delinquency] Delinquency_30Plus_Rate
+// Business Purpose: Percentage of pool balance in 30+ DPD — primary delinquency trigger metric.
+[Delinquency_30Plus_Rate] =
+    DIVIDE([Delinquent Balance 30Plus], [Total Outstanding Balance], 0)
+
+// [Delinquency] Delinquency_90Plus_Rate
+// Business Purpose: Percentage of pool balance 90+ DPD — NPA-equivalent delinquency rate.
+[Delinquency_90Plus_Rate] =
+    DIVIDE(
+        CALCULATE(
+            SUM(auto_loan_securitisation_data[CurrentBalance]),
+            auto_loan_securitisation_data[DelinquencyDays] >= 90
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+
+// ============================================================
+// CATEGORY 3: WEIGHTED AVERAGE MEASURES
+// ============================================================
+
+// [Weighted Avg] WAC — Weighted Average Coupon
+// Business Purpose: Blended interest rate across all active loans weighted by balance.
+[WAC] =
+    DIVIDE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[CurrentBalance] * auto_loan_securitisation_data[InterestRate]
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+// [Weighted Avg] WAM — Weighted Average Maturity
+// Business Purpose: Average remaining term to maturity, weighted by current balance.
+[WAM] =
+    DIVIDE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[CurrentBalance] * auto_loan_securitisation_data[RemainingTerm]
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+// [Weighted Avg] WALA — Weighted Average Loan Age
+// Business Purpose: Average seasoning of loans in the pool, weighted by balance.
+[WALA] =
+    DIVIDE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[CurrentBalance] * auto_loan_securitisation_data[MonthsOnBook]
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+// [Weighted Avg] WALT — Weighted Average Life Term
+// Business Purpose: Original loan term weighted by balance — indicates pool tenor profile.
+[WALT] =
+    DIVIDE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[CurrentBalance] * auto_loan_securitisation_data[OriginalTerm]
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+// [Weighted Avg] WA_LTV_Origination
+// Business Purpose: Weighted average LTV at origination — indicates original credit risk.
+[WA_LTV_Origination] =
+    DIVIDE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[OriginalLoanAmount] * auto_loan_securitisation_data[LTV_AtOrigination]
+        ),
+        [Original Pool Balance],
+        0
+    )
+
+// [Weighted Avg] WA_LTV_Current
+// Business Purpose: Current weighted average LTV — key collateral coverage metric.
+[WA_LTV_Current] =
+    DIVIDE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[CurrentBalance] * auto_loan_securitisation_data[LTV_Current]
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+// [Weighted Avg] WA_CIBIL_Score_Current
+// Business Purpose: Current weighted average CIBIL credit score — pool credit quality indicator.
+[WA_CIBIL_Score_Current] =
+    DIVIDE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[CurrentBalance] * auto_loan_securitisation_data[CIBIL_Score_Current]
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+// [Weighted Avg] WA_DTI_Ratio
+// Business Purpose: Weighted average debt-to-income ratio across borrowers — affordability metric.
+[WA_DTI_Ratio] =
+    DIVIDE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[CurrentBalance] * auto_loan_securitisation_data[DTI_Ratio]
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+
+// ============================================================
+// CATEGORY 4: TIME INTELLIGENCE MEASURES
+// ============================================================
+
+// [Time Intelligence] YTD_NetLoss
+// Business Purpose: Year-to-date cumulative net loss for performance benchmarking.
+[YTD_NetLoss] =
+    CALCULATE(
+        SUM(dynamic_loss_monthly[NetLoss_ThisMonth]),
+        DATESYTD(DimDate[Date])
+    )
+
+// [Time Intelligence] QTD_NetLoss
+// Business Purpose: Quarter-to-date cumulative net loss for quarterly investor reports.
+[QTD_NetLoss] =
+    CALCULATE(
+        SUM(dynamic_loss_monthly[NetLoss_ThisMonth]),
+        DATESQTD(DimDate[Date])
+    )
+
+// [Time Intelligence] MTD_Collections
+// Business Purpose: Month-to-date total collections received from borrowers.
+[MTD_Collections] =
+    CALCULATE(
+        SUM(dynamic_loss_monthly[CollectionsTotal]),
+        DATESMTD(DimDate[Date])
+    )
+
+// [Time Intelligence] Rolling_3M_DefaultRate
+// Business Purpose: 3-month rolling average monthly default rate — smooths seasonal noise.
+[Rolling_3M_DefaultRate] =
+    CALCULATE(
+        AVERAGE(dynamic_loss_monthly[MonthlyDefaultRate]),
+        DATESINPERIOD(DimDate[Date], LASTDATE(DimDate[Date]), -3, MONTH)
+    )
+
+// [Time Intelligence] Rolling_12M_AvgDelinquencyRate
+// Business Purpose: 12-month rolling average delinquency rate — used for trend deviation alerts.
+[Rolling_12M_AvgDelinquencyRate] =
+    CALCULATE(
+        AVERAGEX(
+            dynamic_loss_monthly,
+            dynamic_loss_monthly[MonthlyDefaultRate]
+        ),
+        DATESINPERIOD(DimDate[Date], LASTDATE(DimDate[Date]), -12, MONTH)
+    )
+
+// [Time Intelligence] MoM_Balance_Change
+// Business Purpose: Month-over-month change in outstanding pool balance.
+[MoM_Balance_Change] =
+    [Total Outstanding Balance] -
+    CALCULATE(
+        [Total Outstanding Balance],
+        PREVIOUSMONTH(DimDate[Date])
+    )
+
+// [Time Intelligence] MoM_DefaultRate_Change
+// Business Purpose: Month-over-month change in monthly default rate — early warning signal.
+[MoM_DefaultRate_Change] =
+    [Delinquency_30Plus_Rate] -
+    CALCULATE(
+        [Delinquency_30Plus_Rate],
+        PREVIOUSMONTH(DimDate[Date])
+    )
+
+// [Time Intelligence] YoY_Balance_Change
+// Business Purpose: Year-over-year change in pool balance for annual trend reporting.
+[YoY_Balance_Change] =
+    [Total Outstanding Balance] -
+    CALCULATE(
+        [Total Outstanding Balance],
+        PARALLELPERIOD(DimDate[Date], -12, MONTH)
+    )
+
+// [Time Intelligence] PriorMonth_Balance
+// Business Purpose: Outstanding balance in the prior reporting month for MoM comparison.
+[PriorMonth_Balance] =
+    CALCULATE(
+        [Total Outstanding Balance],
+        PREVIOUSMONTH(DimDate[Date])
+    )
+
+// [Time Intelligence] StdDev_12M_DelinquencyRate
+// Business Purpose: Standard deviation of monthly default rate over 12 months — detects volatility.
+[StdDev_12M_DelinquencyRate] =
+    CALCULATE(
+        STDEV.P(dynamic_loss_monthly[MonthlyDefaultRate]),
+        DATESINPERIOD(DimDate[Date], LASTDATE(DimDate[Date]), -12, MONTH)
+    )
+
+
+// ============================================================
+// CATEGORY 5: CONCENTRATION MEASURES
+// ============================================================
+
+// [Concentration] HHI_Geographic_Concentration
+// Business Purpose: Herfindahl-Hirschman Index for geographic concentration risk.
+[HHI_Geographic_Concentration] =
+    SUMX(
+        VALUES(auto_loan_securitisation_data[State]),
+        VAR StateShare =
+            DIVIDE(
+                CALCULATE(SUM(auto_loan_securitisation_data[CurrentBalance])),
+                [Total Outstanding Balance],
+                0
+            )
+        RETURN StateShare * StateShare
+    )
+
+// [Concentration] Top5_State_Balance_Share
+// Business Purpose: Combined balance share of top 5 states — geographic concentration.
+[Top5_State_Balance_Share] =
+    DIVIDE(
+        SUMX(
+            TOPN(
+                5,
+                SUMMARIZE(
+                    auto_loan_securitisation_data,
+                    auto_loan_securitisation_data[State],
+                    "StateBalance", SUM(auto_loan_securitisation_data[CurrentBalance])
+                ),
+                [StateBalance], DESC
+            ),
+            [StateBalance]
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+// [Concentration] Top10_Borrower_Balance_Share
+// Business Purpose: Combined balance share of top 10 borrowers — obligor concentration.
+[Top10_Borrower_Balance_Share] =
+    DIVIDE(
+        SUMX(
+            TOPN(
+                10,
+                SUMMARIZE(
+                    auto_loan_securitisation_data,
+                    auto_loan_securitisation_data[BorrowerID],
+                    "BorrowerBalance", SUM(auto_loan_securitisation_data[CurrentBalance])
+                ),
+                [BorrowerBalance], DESC
+            ),
+            [BorrowerBalance]
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+// [Concentration] SingleObligor_MaxExposure
+// Business Purpose: Largest single borrower exposure — single name concentration limit.
+[SingleObligor_MaxExposure] =
+    MAXX(
+        SUMMARIZE(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[BorrowerID],
+            "BorrowerBalance", SUM(auto_loan_securitisation_data[CurrentBalance])
+        ),
+        [BorrowerBalance]
+    )
+
+// [Concentration] VehicleType_Concentration_HHI
+// Business Purpose: HHI for vehicle type mix — collateral type concentration.
+[VehicleType_Concentration_HHI] =
+    SUMX(
+        VALUES(auto_loan_securitisation_data[VehicleType]),
+        VAR TypeShare =
+            DIVIDE(
+                CALCULATE(SUM(auto_loan_securitisation_data[CurrentBalance])),
+                [Total Outstanding Balance],
+                0
+            )
+        RETURN TypeShare * TypeShare
+    )
+
+// [Concentration] Servicer_Concentration
+// Business Purpose: Balance managed by the largest single servicer — operational risk.
+[Servicer_Concentration] =
+    DIVIDE(
+        MAXX(
+            SUMMARIZE(
+                auto_loan_securitisation_data,
+                auto_loan_securitisation_data[ServicerID],
+                "SvcBalance", SUM(auto_loan_securitisation_data[CurrentBalance])
+            ),
+            [SvcBalance]
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+
+// ============================================================
+// CATEGORY 6: CASH FLOW WATERFALL MEASURES
+// ============================================================
+// Assumptions: Senior Tranche = 75% of pool; Coupon = 8% p.a.
+//              Mezzanine Tranche = 15% of pool; Coupon = 10% p.a.
+//              Equity/Residual = 10% of pool
+
+// [Waterfall] Waterfall_TotalCollections
+// Business Purpose: Total cash collected from borrowers in the reporting period.
+[Waterfall_TotalCollections] =
+    SUM(dynamic_loss_monthly[CollectionsTotal])
+
+// [Waterfall] Waterfall_Senior_Balance
+// Business Purpose: Notional outstanding principal allocated to the senior tranche.
+[Waterfall_Senior_Balance] =
+    [Total Outstanding Balance] * 0.75
+
+// [Waterfall] Waterfall_Senior_Interest
+// Business Purpose: Monthly interest due to senior noteholders at 8% p.a.
+[Waterfall_Senior_Interest] =
+    [Waterfall_Senior_Balance] * 0.08 / 12
+
+// [Waterfall] Waterfall_Senior_Principal
+// Business Purpose: Scheduled principal repayment to senior tranche for the period.
+[Waterfall_Senior_Principal] =
+    (
+        CALCULATE([Total Outstanding Balance], PREVIOUSMONTH(DimDate[Date])) -
+        [Total Outstanding Balance]
+    ) * 0.75
+
+// [Waterfall] Waterfall_Senior_Total
+// Business Purpose: Total payment to senior tranche (interest + principal).
+[Waterfall_Senior_Total] =
+    [Waterfall_Senior_Interest] + [Waterfall_Senior_Principal]
+
+// [Waterfall] Waterfall_Mezzanine_Balance
+// Business Purpose: Notional outstanding principal allocated to the mezzanine tranche.
+[Waterfall_Mezzanine_Balance] =
+    [Total Outstanding Balance] * 0.15
+
+// [Waterfall] Waterfall_Mezzanine_Interest
+// Business Purpose: Monthly interest due to mezzanine noteholders at 10% p.a.
+[Waterfall_Mezzanine_Interest] =
+    [Waterfall_Mezzanine_Balance] * 0.10 / 12
+
+// [Waterfall] Waterfall_Mezzanine_Principal
+// Business Purpose: Scheduled principal repayment to mezzanine tranche.
+[Waterfall_Mezzanine_Principal] =
+    (
+        CALCULATE([Total Outstanding Balance], PREVIOUSMONTH(DimDate[Date])) -
+        [Total Outstanding Balance]
+    ) * 0.15
+
+// [Waterfall] Waterfall_Mezzanine_Total
+// Business Purpose: Total payment to mezzanine tranche (interest + principal).
+[Waterfall_Mezzanine_Total] =
+    [Waterfall_Mezzanine_Interest] + [Waterfall_Mezzanine_Principal]
+
+// [Waterfall] Waterfall_ReserveAccount_Contribution
+// Business Purpose: Amount set aside to maintain the 2% reserve fund requirement.
+[Waterfall_ReserveAccount_Contribution] =
+    MAX(
+        0,
+        [Total Outstanding Balance] * 0.02 -
+        [Total Outstanding Balance] * 0.02 * 0.95
+    )
+
+// [Waterfall] Waterfall_Equity_Residual
+// Business Purpose: Residual cash flow after all senior/mezz/reserve obligations — equity return.
+[Waterfall_Equity_Residual] =
+    MAX(
+        0,
+        [Waterfall_TotalCollections] -
+        [Waterfall_Senior_Total] -
+        [Waterfall_Mezzanine_Total] -
+        [Waterfall_ReserveAccount_Contribution]
+    )
+
+// [Waterfall] OC_Ratio_Current
+// Business Purpose: Overcollateralisation ratio — pool balance / note balance. Target > 1.05.
+[OC_Ratio_Current] =
+    DIVIDE(
+        [Total Outstanding Balance],
+        [Waterfall_Senior_Balance] + [Waterfall_Mezzanine_Balance],
+        0
+    )
+
+
+// ============================================================
+// CATEGORY 7: TRIGGER & COVENANT TESTING MEASURES
+// ============================================================
+
+// [Trigger] Delinquency_Trigger_Proximity
+// Business Purpose: Basis points between current 90+ DPD rate and 8% delinquency trigger threshold.
+[Delinquency_Trigger_Proximity] =
+    0.08 - [Delinquency_90Plus_Rate]
+
+// [Trigger] Loss_Trigger_Proximity
+// Business Purpose: Gap between current net loss rate and 2% cumulative loss trigger threshold.
+[Loss_Trigger_Proximity] =
+    0.02 - DIVIDE([Net Loss Total], [Original Pool Balance], 0)
+
+// [Trigger] OC_Trigger_Breach
+// Business Purpose: Flag (1=breach) if overcollateralisation ratio falls below 1.05 trigger.
+[OC_Trigger_Breach] =
+    IF([OC_Ratio_Current] < 1.05, 1, 0)
+
+// [Trigger] Delinquency_Trigger_Breach
+// Business Purpose: Flag (1=breach) if 90+ DPD delinquency rate exceeds 8% trigger threshold.
+[Delinquency_Trigger_Breach] =
+    IF([Delinquency_90Plus_Rate] > 0.08, 1, 0)
+
+// [Trigger] Loss_Trigger_Breach
+// Business Purpose: Flag (1=breach) if cumulative net loss rate exceeds 2% trigger threshold.
+[Loss_Trigger_Breach] =
+    IF(
+        DIVIDE([Net Loss Total], [Original Pool Balance], 0) > 0.02,
+        1, 0
+    )
+
+// [Trigger] ExcessSpread_Current
+// Business Purpose: Difference between pool yield and note coupon cost — first loss protection.
+[ExcessSpread_Current] =
+    [WAC] / 100 - (0.08 * 0.75 + 0.10 * 0.15) - 0.01
+
+
+// ============================================================
+// CATEGORY 8: IFRS 9 ECL MEASURES
+// ============================================================
+
+// [IFRS9] IFRS9_Stage1_Count
+// Business Purpose: Count of loans in Stage 1 — 12-month ECL applies (current/<=30 DPD).
+[IFRS9_Stage1_Count] =
+    CALCULATE(
+        COUNTROWS(auto_loan_securitisation_data),
+        auto_loan_securitisation_data[IFRS9_Stage] = 1
+    )
+
+// [IFRS9] IFRS9_Stage2_Count
+// Business Purpose: Count of loans in Stage 2 — lifetime ECL applies (SICR observed).
+[IFRS9_Stage2_Count] =
+    CALCULATE(
+        COUNTROWS(auto_loan_securitisation_data),
+        auto_loan_securitisation_data[IFRS9_Stage] = 2
+    )
+
+// [IFRS9] IFRS9_Stage3_Count
+// Business Purpose: Count of loans in Stage 3 — credit-impaired (120+ DPD or defaulted).
+[IFRS9_Stage3_Count] =
+    CALCULATE(
+        COUNTROWS(auto_loan_securitisation_data),
+        auto_loan_securitisation_data[IFRS9_Stage] = 3
+    )
+
+// [IFRS9] Stage1_ECL_Total
+// Business Purpose: 12-month ECL for Stage 1 loans = PD(12M) × LGD × EAD.
+[Stage1_ECL_Total] =
+    CALCULATE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[PD_Estimate] *
+            auto_loan_securitisation_data[LGD_Estimate] *
+            auto_loan_securitisation_data[EAD]
+        ),
+        auto_loan_securitisation_data[IFRS9_Stage] = 1
+    )
+
+// [IFRS9] Stage2_ECL_Total
+// Business Purpose: Lifetime ECL for Stage 2 loans (SICR) — uses lifetime PD multiplied by 1.5.
+[Stage2_ECL_Total] =
+    CALCULATE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[PD_Estimate] * 1.5 *
+            auto_loan_securitisation_data[LGD_Estimate] *
+            auto_loan_securitisation_data[EAD]
+        ),
+        auto_loan_securitisation_data[IFRS9_Stage] = 2
+    )
+
+// [IFRS9] Stage3_ECL_Total
+// Business Purpose: Lifetime ECL for Stage 3 impaired loans — uses full lifetime PD.
+[Stage3_ECL_Total] =
+    CALCULATE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[PD_Estimate] * 2.0 *
+            auto_loan_securitisation_data[LGD_Estimate] *
+            auto_loan_securitisation_data[EAD]
+        ),
+        auto_loan_securitisation_data[IFRS9_Stage] = 3
+    )
+
+// [IFRS9] Total_ECL_Provision
+// Business Purpose: Total Expected Credit Loss provision across all IFRS 9 stages.
+[Total_ECL_Provision] =
+    [Stage1_ECL_Total] + [Stage2_ECL_Total] + [Stage3_ECL_Total]
+
+// [IFRS9] ECL_as_Pct_of_Balance
+// Business Purpose: ECL provision as a percentage of outstanding pool balance.
+[ECL_as_Pct_of_Balance] =
+    DIVIDE([Total_ECL_Provision], [Total Outstanding Balance], 0)
+
+// [IFRS9] ECL_Coverage_Ratio
+// Business Purpose: Ratio of ECL provision to total EAD — measures adequacy of provisioning.
+[ECL_Coverage_Ratio] =
+    DIVIDE([Total_ECL_Provision], [EAD_Total], 0)
+
+// [IFRS9] PD_Weighted_Average
+// Business Purpose: Portfolio weighted average probability of default — overall credit quality.
+[PD_Weighted_Average] =
+    DIVIDE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[EAD] * auto_loan_securitisation_data[PD_Estimate]
+        ),
+        [EAD_Total],
+        0
+    )
+
+// [IFRS9] LGD_Weighted_Average
+// Business Purpose: Portfolio weighted average loss given default — recovery rate indicator.
+[LGD_Weighted_Average] =
+    DIVIDE(
+        SUMX(
+            auto_loan_securitisation_data,
+            auto_loan_securitisation_data[EAD] * auto_loan_securitisation_data[LGD_Estimate]
+        ),
+        [EAD_Total],
+        0
+    )
+
+// [IFRS9] EAD_Total
+// Business Purpose: Total exposure at default across the entire pool.
+[EAD_Total] =
+    SUM(auto_loan_securitisation_data[EAD])
+
+
+// ============================================================
+// CATEGORY 9: STRESS TESTING MEASURES
+// ============================================================
+// Requires Power BI What-If Parameters:
+//   DefaultRateMultiplier: 1.0 to 5.0, step 0.1
+//   RecoveryHaircut: 0.00 to 0.50, step 0.05
+//   PrepaymentSpeedChange: -0.50 to 0.50, step 0.05
+//   InterestRateShock_bps: 0 to 500, step 25
+
+// [Stress] Stressed_DefaultRate
+// Business Purpose: Default rate adjusted by the stress multiplier parameter.
+[Stressed_DefaultRate] =
+    [Delinquency_30Plus_Rate] * 'DefaultRateMultiplier'[DefaultRateMultiplier Value]
+
+// [Stress] Stressed_LGD
+// Business Purpose: LGD adjusted for recovery rate haircut under stress scenario.
+[Stressed_LGD] =
+    [LGD_Weighted_Average] + (1 - [LGD_Weighted_Average]) * 'RecoveryHaircut'[RecoveryHaircut Value]
+
+// [Stress] Stressed_PD
+// Business Purpose: Probability of default scaled by stress multiplier for ECL computation.
+[Stressed_PD] =
+    MIN(1.0, [PD_Weighted_Average] * 'DefaultRateMultiplier'[DefaultRateMultiplier Value])
+
+// [Stress] Stressed_ECL_Stage1
+// Business Purpose: 12-month ECL for Stage 1 loans under stress scenario.
+[Stressed_ECL_Stage1] =
+    CALCULATE(
+        SUMX(
+            auto_loan_securitisation_data,
+            MIN(1.0, auto_loan_securitisation_data[PD_Estimate] * 'DefaultRateMultiplier'[DefaultRateMultiplier Value]) *
+            (auto_loan_securitisation_data[LGD_Estimate] + (1 - auto_loan_securitisation_data[LGD_Estimate]) * 'RecoveryHaircut'[RecoveryHaircut Value]) *
+            auto_loan_securitisation_data[EAD]
+        ),
+        auto_loan_securitisation_data[IFRS9_Stage] = 1
+    )
+
+// [Stress] Stressed_ECL_Stage2
+// Business Purpose: Lifetime ECL for Stage 2 loans under stress scenario.
+[Stressed_ECL_Stage2] =
+    CALCULATE(
+        SUMX(
+            auto_loan_securitisation_data,
+            MIN(1.0, auto_loan_securitisation_data[PD_Estimate] * 1.5 * 'DefaultRateMultiplier'[DefaultRateMultiplier Value]) *
+            (auto_loan_securitisation_data[LGD_Estimate] + (1 - auto_loan_securitisation_data[LGD_Estimate]) * 'RecoveryHaircut'[RecoveryHaircut Value]) *
+            auto_loan_securitisation_data[EAD]
+        ),
+        auto_loan_securitisation_data[IFRS9_Stage] = 2
+    )
+
+// [Stress] Stressed_ECL_Stage3
+// Business Purpose: Lifetime ECL for Stage 3 loans under crisis stress scenario.
+[Stressed_ECL_Stage3] =
+    CALCULATE(
+        SUMX(
+            auto_loan_securitisation_data,
+            MIN(1.0, auto_loan_securitisation_data[PD_Estimate] * 2.0 * 'DefaultRateMultiplier'[DefaultRateMultiplier Value]) *
+            (auto_loan_securitisation_data[LGD_Estimate] + (1 - auto_loan_securitisation_data[LGD_Estimate]) * 'RecoveryHaircut'[RecoveryHaircut Value]) *
+            auto_loan_securitisation_data[EAD]
+        ),
+        auto_loan_securitisation_data[IFRS9_Stage] = 3
+    )
+
+// [Stress] Stressed_ECL_Total
+// Business Purpose: Total stressed Expected Credit Loss across all stages and stress parameters.
+[Stressed_ECL_Total] =
+    [Stressed_ECL_Stage1] + [Stressed_ECL_Stage2] + [Stressed_ECL_Stage3]
+
+// [Stress] Stressed_NetLoss
+// Business Purpose: Net loss under stress scenario after applying recovery haircut.
+[Stressed_NetLoss] =
+    SUMX(
+        auto_loan_securitisation_data,
+        auto_loan_securitisation_data[LossAmount] *
+        (1 + ('DefaultRateMultiplier'[DefaultRateMultiplier Value] - 1) * 0.5) *
+        (1 + 'RecoveryHaircut'[RecoveryHaircut Value])
+    )
+
+// [Stress] Stressed_OC_Ratio
+// Business Purpose: Overcollateralisation ratio under stress — critical for trigger proximity.
+[Stressed_OC_Ratio] =
+    DIVIDE(
+        [Total Outstanding Balance] - [Stressed_NetLoss],
+        ([Waterfall_Senior_Balance] + [Waterfall_Mezzanine_Balance]),
+        0
+    )
+
+
+// ============================================================
+// CATEGORY 10: VINTAGE ANALYSIS MEASURES
+// ============================================================
+
+// [Vintage] CumulativeNetLossRate_ByVintage
+// Business Purpose: Cumulative net loss rate per vintage — plotted as loss curves by age.
+[CumulativeNetLossRate_ByVintage] =
+    AVERAGE(static_pool_vintage_data[CumulativeNetLossRate])
+
+// [Vintage] MarginalLossRate_Peak
+// Business Purpose: Peak marginal monthly loss rate per vintage — indicates loss timing curve peak.
+[MarginalLossRate_Peak] =
+    MAXX(
+        VALUES(static_pool_vintage_data[VintageID]),
+        CALCULATE(MAX(static_pool_vintage_data[MarginalLossRate]))
+    )
+
+// [Vintage] LossCurve_Projection
+// Business Purpose: Extrapolated lifetime net loss rate using current trajectory and seasoning.
+[LossCurve_Projection] =
+    VAR AvgMarginalRate = AVERAGE(static_pool_vintage_data[MarginalLossRate])
+    VAR AvgMonthsOnBook = AVERAGE(static_pool_vintage_data[MonthsOnBook])
+    VAR AvgOriginalTerm = 60
+    RETURN
+        [CumulativeNetLossRate_ByVintage] +
+        AvgMarginalRate * (AvgOriginalTerm - AvgMonthsOnBook)
+
+// [Vintage] PoolFactor_ByVintage
+// Business Purpose: Average pool factor across months for selected vintage — amortisation pace.
+[PoolFactor_ByVintage] =
+    AVERAGE(static_pool_vintage_data[PoolFactor])
+
+// [Vintage] WAC_ByVintage
+// Business Purpose: Weighted average coupon computed at the vintage cohort level.
+[WAC_ByVintage] =
+    CALCULATE(
+        [WAC],
+        USERELATIONSHIP(auto_loan_securitisation_data[OriginationDate], DimDate[Date])
+    )
+
+// [Vintage] WALA_ByVintage
+// Business Purpose: Weighted average loan age for the selected vintage cohort.
+[WALA_ByVintage] =
+    CALCULATE(
+        [WALA],
+        USERELATIONSHIP(auto_loan_securitisation_data[OriginationDate], DimDate[Date])
+    )
+
+// ============================================================
+// ADDITIONAL MEASURES — INVESTOR REPORTING
+// ============================================================
+
+// [Investor] Monthly_Default_Rate
+// Business Purpose: Ratio of new defaults to beginning-of-period pool balance.
+[Monthly_Default_Rate] =
+    AVERAGE(dynamic_loss_monthly[MonthlyDefaultRate])
+
+// [Investor] CPR_Annualised
+// Business Purpose: Conditional Prepayment Rate annualised — key prepayment speed metric.
+[CPR_Annualised] =
+    AVERAGE(dynamic_loss_monthly[CPR_Annualised])
+
+// [Investor] SMM_Single_Monthly_Mortality
+// Business Purpose: Single Monthly Mortality rate — monthly prepayment speed.
+[SMM_Single_Monthly_Mortality] =
+    AVERAGE(dynamic_loss_monthly[SMM])
+
+// [Investor] Collection_Efficiency
+// Business Purpose: Ratio of collections received to billing amount — servicer performance.
+[Collection_Efficiency] =
+    AVERAGE(dynamic_loss_monthly[CollectionEfficiency])
+
+// [Investor] Gross_Loss_Rate
+// Business Purpose: Gross loss as a percentage of beginning-of-period pool balance.
+[Gross_Loss_Rate] =
+    DIVIDE(
+        SUM(dynamic_loss_monthly[GrossLoss_ThisMonth]),
+        AVERAGE(dynamic_loss_monthly[BOP_Balance]),
+        0
+    )
+
+// [Investor] Recovery_Rate
+// Business Purpose: Recoveries as a percentage of gross losses — LGD validation metric.
+[Recovery_Rate] =
+    DIVIDE(
+        SUM(dynamic_loss_monthly[Recoveries_ThisMonth]),
+        SUM(dynamic_loss_monthly[GrossLoss_ThisMonth]),
+        0
+    )
+
+// [Investor] Excess_Spread_Monthly
+// Business Purpose: Monthly excess spread — buffer against losses before credit enhancement erodes.
+[Excess_Spread_Monthly] =
+    AVERAGE(dynamic_loss_monthly[ExcessSpread_Monthly])
+
+// [Investor] Insurance_Coverage_Rate
+// Business Purpose: Percentage of loan balance covered by comprehensive or third-party insurance.
+[Insurance_Coverage_Rate] =
+    DIVIDE(
+        CALCULATE(
+            SUM(auto_loan_securitisation_data[CurrentBalance]),
+            auto_loan_securitisation_data[HasInsurance] = TRUE()
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+// [Investor] New_Vehicle_Share
+// Business Purpose: Percentage of pool balance backed by new vehicles — collateral quality.
+[New_Vehicle_Share] =
+    DIVIDE(
+        CALCULATE(
+            SUM(auto_loan_securitisation_data[CurrentBalance]),
+            auto_loan_securitisation_data[IsNewVehicle] = TRUE()
+        ),
+        [Total Outstanding Balance],
+        0
+    )
+
+// ============================================================
+// END OF DAX MEASURES FILE
+// Total: 86 Measures across 10 Categories
+// ============================================================
